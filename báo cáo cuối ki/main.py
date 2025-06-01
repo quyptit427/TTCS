@@ -475,3 +475,28 @@ if _name_ == "_main_":
     files = download_all_csv_files()
     if files:
         load_csvs_to_postgres(files)
+#tạo biểu đồ
+import dash
+from dash import dcc, html
+import pandas as pd
+from sqlalchemy import create_engine
+import plotly.express as px
+
+# Kết nối PostgreSQL
+engine = create_engine("postgresql://postgres:your_password@localhost:5432/glamira")
+
+# Load dữ liệu
+df = pd.read_sql("SELECT country_short, COUNT(*) as count FROM ip_location GROUP BY country_short", engine)
+
+# Tạo biểu đồ
+fig = px.bar(df, x="country_short", y="count", title="Số IP theo quốc gia")
+
+# Tạo Dash app
+app = dash.Dash(_name_)
+app.layout = html.Div([
+    html.H1("Dashboard IP Location"),
+    dcc.Graph(figure=fig)
+])
+
+if _name_ == '_main_':
+    app.run_server(debug=True)
