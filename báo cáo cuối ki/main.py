@@ -92,6 +92,90 @@ for i, ip_batch in enumerate(batch_iterator(cursor, BATCH_SIZE)):
 
 logger.info(f"✅ Finished: Total inserted records = {total_inserted}")
 print(f"✅ Ghi log vào: {LOG_PATH}")
+#6. **Product name collection (1 day)**
+#    - Filter data in collections equal to `view_product_detail`, `select_product_option`, and `select_product_option_quality`.
+#    - Get the `product_id` and `current_url` values.
+#    - Crawl the product name based on the information above; get **only one active `product name`** for each distinct `product_id`.
+#    - Store the data in CSV file(s) for later transformation.
+import csv
+import requests
+from bs4 import BeautifulSoup
+from pymongo import MongoClient
+import pandas as pd
+
+# Cấu hình
+BATCH_SIZE = 500
+MAX_RECORDS = 1_000_000
+CSV_OUTPUT = 'product_data.csv'
+
+# Kết nối MongoDB
+client = MongoClient("mongodb://localhost:27017/")
+db = client['countly']
+collection = db['summary']
+
+# Truy vấn lọc
+query = {
+    "collection": {"$in": ["view_product_detail", "select_product_option", "select_product_option_quality"]},
+    "product_id": {"$exists": True, "$ne": ""},
+    "current_url": {"$exists": True, "$ne": ""}
+}
+
+# Crawl product name từ URL
+def get_product_name(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            title_tag = soup.find("h1", class_="product-name") or soup.find("title")
+            return title_tag.text.strip() if title_tag else None
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+    return None
+
+# Tổng số bản ghi trong MongoDB (chỉ để báo cáo)
+total_records = collection.count_documents(query)
+print(f"Tổng số bản ghi phù hợp: {total_records}")
+
+# Khởi tạo
+seen_product_ids = set()
+total_collected = 0
+
+# Batch loop
+for offset in range(0, total_records, BATCH_SIZE):
+    if total_collected >= MAX_RECORDS:
+        print(f"Đã đạt giới hạn {MAX_RECORDS} bản ghi. Kết thúc.")
+        break
+
+    print(f"🧩 Đang xử lý batch {offset} -> {offset + BATCH_SIZE}")
+    docs = collection.find(query).skip(offset).limit(BATCH_SIZE)
+    batch_data = []
+
+    for doc in docs:
+        pid = doc.get("product_id")
+        url = doc.get("current_url")
+
+        if pid not in seen_product_ids:
+            product_name = get_product_name(url)
+            if product_name:
+                batch_data.append({
+                    "product_id": pid,
+                    "current_url": url,
+                    "product_name": product_name
+                })
+                seen_product_ids.add(pid)
+                total_collected += 1
+
+                if total_collected >= MAX_RECORDS:
+                    print("⛔ Đã đạt giới hạn 1 triệu bản ghi trong batch hiện tại.")
+                    break
+
+    # Ghi ra file CSV (append)
+    if batch_data:
+        df = pd.DataFrame(batch_data)
+        df.to_csv(CSV_OUTPUT, mode='a', header=not pd.io.common.file_exists(CSV_OUTPUT), index=False, quoting=csv.QUOTE_ALL)
+
+print(f"✅ Hoàn tất! Tổng số sản phẩm đã lưu: {total_collected}")
 ### Detailed Steps:
 
 # **Data Export Process** 
