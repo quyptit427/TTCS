@@ -202,6 +202,7 @@ import IP2Location
 import pandas as pd
 import os
 from datetime import datetime
+import boto3
 
 class Logger:
     def __init__(self, filename):
@@ -247,6 +248,31 @@ def batch_iterator(cursor, batch_size):
 
 log_filename = "/home/quy/ip_location.log"
 logger = Logger(log_filename)
+
+# Cấu hình MinIO
+MINIO_ENDPOINT = "http://localhost:9000"
+MINIO_ACCESS_KEY = "7CHpYfc6MCv4vQyfhwB3"
+MINIO_SECRET_KEY = "WZQkE2OlVBD9I8eK6lBrcp0mImCgERnc9SgA0QLv"
+MINIO_BUCKET = "glamira"
+
+def upload_file_to_minio(file_path, bucket_name, object_name):
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=MINIO_ENDPOINT,
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY
+    )
+    
+    buckets = s3_client.list_buckets()
+    if bucket_name not in [b['Name'] for b in buckets['Buckets']]:
+        s3_client.create_bucket(Bucket=bucket_name)
+        logger.info(f"Created bucket: {bucket_name}")
+
+    try:
+        s3_client.upload_file(file_path, bucket_name, object_name)
+        logger.info(f"Uploaded '{file_path}' as '{object_name}' to bucket '{bucket_name}'")
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
 
 class ETL():
     def __init__(self):
@@ -344,6 +370,8 @@ class ETL():
             if filename.startswith(input_prefix) and filename.endswith(".csv"):
                 input_path = os.path.join(input_dir, filename)
                 self.load_batch(input_path, load_collection_)
+                # Upload file csv đã load lên MinIO
+                upload_file_to_minio(input_path, MINIO_BUCKET, filename)
 
     @logger.log_errors(logger)
     def load_batch(self, input_path, load_collection):
@@ -374,7 +402,7 @@ class ETL():
         self.transform(input_dir="data", input_prefix="ips_batch_", output_prefix="location_batch_", skip_exist=True)
         self.load(input_dir="data", input_prefix="location_batch_", load_collection=self.target_collection_name)
 
-# Sửa đúng cú pháp khởi chạy
+
 if _name_ == '_main_':
     etl = ETL()
     etl.run()
