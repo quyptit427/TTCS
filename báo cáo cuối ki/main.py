@@ -406,3 +406,72 @@ class ETL():
 if _name_ == '_main_':
     etl = ETL()
     etl.run()
+# Lấy dữ liệu từ minio về postGres (Load)
+import boto3
+import pandas as pd
+from sqlalchemy import create_engine
+import os
+
+# === Cấu hình MinIO ===
+MINIO_ENDPOINT = "http://localhost:9000"
+MINIO_ACCESS_KEY = "7CHpYfc6MCv4vQyfhwB3"
+MINIO_SECRET_KEY = "WZQkE2OlVBD9I8eK6lBrcp0mImCgERnc9SgA0QLv"
+MINIO_BUCKET = "glamira"
+
+# === Cấu hình PostgreSQL ===
+POSTGRES_HOST = "localhost"
+POSTGRES_PORT = "5432"
+POSTGRES_DB = "glamira"
+POSTGRES_USER = "postgres"
+POSTGRES_PASSWORD = "1"
+TARGET_TABLE = "ip_location"
+
+# === Tải danh sách tất cả file csv từ MinIO ===
+def download_all_csv_files():
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=MINIO_ENDPOINT,
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY
+    )
+
+    # Tạo thư mục local nếu chưa có
+    os.makedirs("downloads", exist_ok=True)
+
+    # Lấy danh sách các object trong bucket
+    objects = s3.list_objects_v2(Bucket=MINIO_BUCKET)
+
+    if "Contents" not in objects:
+        print("❌ Bucket rỗng hoặc không tồn tại.")
+        return []
+
+    downloaded_files = []
+    for obj in objects["Contents"]:
+        key = obj["Key"]
+        if key.endswith(".csv"):
+            local_path = os.path.join("downloads", key)
+            s3.download_file(MINIO_BUCKET, key, local_path)
+            print(f"✅ Đã tải file: {key}")
+            downloaded_files.append(local_path)
+
+    return downloaded_files
+
+# === Ghi từng file CSV vào bảng PostgreSQL ===
+def load_csvs_to_postgres(file_list):
+    engine = create_engine(
+        f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+    )
+
+    for file_path in file_list:
+        try:
+            df = pd.read_csv(file_path)
+            df.to_sql(TARGET_TABLE, engine, if_exists='append', index=False)
+            print(f"✅ Đã nạp: {file_path}")
+        except Exception as e:
+            print(f"❌ Lỗi khi nạp {file_path}: {e}")
+
+# === Chạy toàn bộ quá trình ===
+if _name_ == "_main_":
+    files = download_all_csv_files()
+    if files:
+        load_csvs_to_postgres(files)
